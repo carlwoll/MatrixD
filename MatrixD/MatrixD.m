@@ -17,9 +17,11 @@ $IdentityMatrix /: MakeBoxes[$IdentityMatrix, fmt_] := "\[DoubleStruckCapitalI]"
 $SingleEntryMatrix /: MakeBoxes[$SingleEntryMatrix, fmt_] := "\[DoubleStruckCapitalJ]"
 $MatrixDimension = \[FormalD]
 
+$MatrixFunctions = {Tr, Transpose, Det, Inverse, MatrixPower, MatrixFunction, MatrixExp, MatrixLog}
+
 Options[MatrixD] = {Assumptions:>Automatic, "Invertible"->True, "MatrixDimensions"->{$MatrixDimension, $MatrixDimension}};
 
-MatrixD[f_, matrix_, OptionsPattern[]] := excludeMatrixFunctionDerivatives[
+MatrixD[f_, matrix_, OptionsPattern[]] := withExcludedFunctions[
 	Catch[
 		Block[
 			{
@@ -34,7 +36,8 @@ MatrixD[f_, matrix_, OptionsPattern[]] := excludeMatrixFunctionDerivatives[
 			]
 		],
 		"Unsupported"
-	]
+	],
+	$MatrixFunctions
 ]
 
 MatrixD /: D[X_, MatrixD, NonConstants->{X_}] := $SingleEntryMatrix
@@ -45,7 +48,7 @@ MatrixD /: D[Inverse[f_], MatrixD, NonConstants->{X_}] := -Inverse[f].D[f, Matri
 
 (* MatrixPower and MatrixFunction have simple derivatives at the top level inside a Tr *)
 MatrixD /: D[Tr[f_], MatrixD, NonConstants->{X_}] := Block[
-	{trQ = MatchQ[f, _MatrixPower | _MatrixFunction]},
+	{trQ = MatchQ[f, _MatrixPower | _MatrixFunction | _MatrixLog | _MatrixExp]},
 
 	Tr[D[f, MatrixD, NonConstants->{X}]]
 ]
@@ -64,6 +67,20 @@ MatrixD /: D[HoldPattern@MatrixFunction[f_, U_], MatrixD, NonConstants->{X_}] :=
 	Message[MatrixD::unsup,MatrixFunction];
 	Throw[$Failed,"Unsupported"] 
 ];
+
+MatrixD /: D[MatrixLog[f_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
+	MatrixD[f, X] . Inverse[f],
+
+	Message[MatrixD::unsup,MatrixLog];
+	Throw[$Failed, "Unsupported"]
+]
+
+MatrixD /: D[MatrixExp[f_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
+	MatrixD[f, X] . MatrixExp[f],
+
+	Message[MatrixD::unsup,MatrixExp];
+	Throw[$Failed, "Unsupported"]
+]
 
 (* If trQ is True, then use simple derivative. Otherwise, use more complicated summation form of derivative *)
 MatrixD /: D[MatrixPower[f_,n_], MatrixD, NonConstants-> {X_}] := Which[
@@ -144,8 +161,8 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 ]
 
 (* helper function that tempoararily excludes matrix functions from normal differentatiation rules *)
-SetAttributes[excludeMatrixFunctionDerivatives, HoldAll];
-excludeMatrixFunctionDerivatives[body_] := Module[{old},
+SetAttributes[withExcludedFunctions, HoldFirst];
+withExcludedFunctions[body_, funs_] := Module[{old},
 	Internal`WithLocalSettings[
 		(* allow D to pass through matrix functions *)
 		old = "ExcludedFunctions" /.
@@ -153,7 +170,7 @@ excludeMatrixFunctionDerivatives[body_] := Module[{old},
 		SetSystemOptions["DifferentiationOptions" -> "ExcludedFunctions"->
 			Union @ Join[
 				old,
-				{Inverse,Tr,Transpose,Det,MatrixPower,MatrixFunction}
+				funs
 			]
 		],
 
@@ -214,11 +231,12 @@ TestMatrixD[a_, X_, OptionsPattern[]] := Module[{constants, constantRules},
 		Flatten[constants[[All,2]]]
 	];
 
-	excludeMatrixFunctionDerivatives[
+	withExcludedFunctions[
 		Column@{
 			D[a /. IJRules /. constants, {X /. constants}] /. constantRules,
 			Hold[Evaluate@MatrixD[a,X]] /. IJRules /. constants /. constantRules
-		}
+		},
+		$MatrixFunctions
 	] //ReleaseHold
 ]
 
