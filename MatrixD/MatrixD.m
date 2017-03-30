@@ -26,7 +26,8 @@ MatrixD[f_, matrix_, OptionsPattern[]] := withExcludedFunctions[
 		Block[
 			{
 			$Assumptions = toAssumptions[f, OptionValue[Assumptions]],
-			$MatrixDimension = Replace[OptionValue["MatrixDimensions"], {{d_, d_} -> d, Except[_Integer] -> \[FormalD]}]
+			$MatrixDimension = Replace[OptionValue["MatrixDimensions"], {{d_, d_} -> d, Except[_Integer] -> \[FormalD]}],
+			$Invertible = TrueQ@OptionValue["Invertible"]
 			},
 
 			MatrixReduce[
@@ -47,36 +48,46 @@ MatrixD /: D[Transpose[f_], MatrixD, NonConstants->{X_}] := Transpose[D[f, Matri
 MatrixD /: D[Inverse[f_], MatrixD, NonConstants->{X_}] := -Inverse[f].D[f, MatrixD, NonConstants->{X}].Inverse[f]
 
 (* MatrixPower and MatrixFunction have simple derivatives at the top level inside a Tr *)
+(* TODO: X.MatrixFunction[Log,X] can be rewritten MatrixFunction[# Log[#]&, X]. This rewrite
+ * should be performed automatically so that MatrixFunction is at top level.
+ *
+ * TODO: Need a predicate indicating a function is "univariate". That's when you can differentiate 
+ * MatrixFunction. Tr[MatrixExp[A. MatrixExp[X]] is not differentiable
+ *)
+
 MatrixD /: D[Tr[f_], MatrixD, NonConstants->{X_}] := Block[
 	{trQ = MatchQ[f, _MatrixPower | _MatrixFunction | _MatrixLog | _MatrixExp]},
 
-	Tr[D[f, MatrixD, NonConstants->{X}]]
+	Tr[D[f, MatrixD, NonConstants->{X}]] /. Tr[0] -> 0
 ]
 
-(* TODO: Need to characterize when derivatives of MatrixPower and MatrixFunction work inside a Det *)
-(* At the moment, all MatrixFunction objects are assumed to work in Det, but this is not true in general *)
-MatrixD /: D[Det[f_], MatrixD, NonConstants->{X_}] := Block[{trQ=True},
-	Det[f] Tr[Inverse[f] . D[f,MatrixD,NonConstants->{X}]]
-]
+MatrixD /: D[Det[a_Dot], MatrixD, NonConstants->{X_}] /; $Invertible := Det[a] (D[Tr[MatrixLog[#]], MatrixD, NonConstants->{X}]& /@ Plus@@a)
 
-(* If trQ is True, then use simple derivative of MatrixFunction. Otherwise fail *)
-(* Incorporated chain rule *)
+MatrixD /: D[Det[Transpose[f_]], MatrixD, NonConstants->{X_}] := D[Det[f], MatrixD, NonConstants->{X}]
+MatrixD /: D[Det[Inverse[f_]], MatrixD, NonConstants->{X_}] := -Det[Inverse[f]] D[Det[f], MatrixD, NonConstants->{X}]/Det[f]
+MatrixD /: D[Det[MatrixPower[f_, n_]], MatrixD, NonConstants->{X_}] := n Det[MatrixPower[f, n]] D[Det[f], MatrixD, NonConstants->{X}]/Det[f]
+MatrixD /: D[Det[f_], MatrixD, NonConstants->{X_}] := Det[f] D[Tr[MatrixLog[f]], MatrixD, NonConstants->{X}]
+
+(* TODO: Times in a Det/Tr should be simplified *)
+
+(* If inside of a Tr, then we can use simple derivatives of Matrix* functions. Otherwise fail *)
 MatrixD /: D[HoldPattern@MatrixFunction[f_, U_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
-	MatrixD[U, X] . MatrixFunction[Derivative[1][f],U],
+	Replace[D[U, MatrixD, NonConstants->{X}], d:Except[0] -> d . MatrixFunction[simplifyPureFunction @ Derivative[1][f], U]],
 
 	Message[MatrixD::unsup,MatrixFunction];
 	Throw[$Failed,"Unsupported"] 
 ];
+simplifyPureFunction[Function[expr_]] := Function[Evaluate@Simplify[expr]]
 
 MatrixD /: D[MatrixLog[f_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
-	MatrixD[f, X] . Inverse[f],
+	Replace[D[f, MatrixD, NonConstants->{X}], d:Except[0] -> d . Inverse[f]],
 
 	Message[MatrixD::unsup,MatrixLog];
 	Throw[$Failed, "Unsupported"]
 ]
 
 MatrixD /: D[MatrixExp[f_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
-	MatrixD[f, X] . MatrixExp[f],
+	Replace[D[f, MatrixD, NonConstants->{X}], d:Except[0] -> d . MatrixExp[f]],
 
 	Message[MatrixD::unsup,MatrixExp];
 	Throw[$Failed, "Unsupported"]
@@ -97,14 +108,21 @@ MatrixD /: D[MatrixPower[f_,n_], MatrixD, NonConstants-> {X_}] := Which[
 	-Sum[
 		Dot[
 			MatrixPower[Inverse@f, \[FormalK]+1],
-			MatrixD[f,X],
+			D[f, MatrixD, NonConstants->{X}],
 			MatrixPower[Inverse@f,-n-\[FormalK]]
 		],
 		{\[FormalK],0,-n-1}
 	],
 	
 	True,
-	Sum[MatrixPower[f,\[FormalK]].MatrixD[f,X].MatrixPower[f,n-\[FormalK]-1],{\[FormalK],0,n-1}]
+	Sum[
+		Dot[
+			MatrixPower[f,\[FormalK]],
+			D[f, MatrixD, NonConstants->{X}],
+			MatrixPower[f,n-\[FormalK]-1]
+		],
+		{\[FormalK],0,n-1}
+	]
 ]
 
 (* implement MatrixD rules for Dot, Times and Plus. This way the automatic differentiation rules for
@@ -155,9 +173,18 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 	Tr[Dot[a___, $SingleEntryMatrix, b___]] := Transpose @ Dot[b, a];
 	Tr[Dot[a___, Transpose[$SingleEntryMatrix], b___]] := Dot[b, a];
 
-	f //. 
+	f /. 
+		{
+		Verbatim[MatrixFunction][Power[E, #]& | Exp, x_] :> MatrixExp[x], 
+		Verbatim[MatrixFunction][Log[#]& | Log, x_] :> MatrixLog[x],
+		Verbatim[MatrixFunction][Power[#, -1]&, x_] :> Inverse[x]
+		} //. 
+
 		h:(Dot|Transpose)->Composition[TensorReduce, TensorExpand, h] //.
-		{MatrixPower[x_,-1]->Inverse[x], (TensorTranspose|Transpose)[x_, {2,1}]->Transpose[x]}
+		{
+			MatrixPower[x_,-1]->Inverse[x],
+			(TensorTranspose|Transpose)[x_, {2,1}]->Transpose[x]
+		}
 ]
 
 (* helper function that tempoararily excludes matrix functions from normal differentatiation rules *)
@@ -198,14 +225,13 @@ toAssumptions[f_, Automatic] := With[
 ]
 
 getSymbols[f_] := Last@Reap[
-   Cases[f,
-    r_Dot | r_Inverse | r_MatrixFunction | r_MatrixProduct | 
-      r_Transpose | r_Tr | r_Det :> iGet[r],
-    {0, Infinity}
-    ],
-   _,
-   Rule[#1, DeleteDuplicates[#2]] &
-   ]
+	Cases[f,
+		(Alternatives@@$MatrixFunctions)[r_] :> iGet[r],
+		{0, Infinity}
+	],
+	_,
+	Rule[#1, DeleteDuplicates[#2]] &
+]
 
 iGet[s_Symbol] := Sow[s, "Matrices"]
 iGet[a_Plus] := iGet /@ a
