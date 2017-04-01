@@ -11,6 +11,8 @@ $MatrixDimension
 MatrixD::unsup = "`1` is not supported outside of Tr";
 MatrixD::scalar = "Matrix derivative of a scalar function `1` encountered";
 
+Get["MatrixD`Utilities`"]
+
 Begin["`Private`"]
 
 $IdentityMatrix /: MakeBoxes[$IdentityMatrix, fmt_] := "\[DoubleStruckCapitalI]"
@@ -21,7 +23,7 @@ $MatrixFunctions = {Tr, Transpose, Det, Inverse, MatrixPower, MatrixFunction, Ma
 
 Options[MatrixD] = {Assumptions:>Automatic, "Invertible"->True, "MatrixDimensions"->{$MatrixDimension, $MatrixDimension}};
 
-MatrixD[f_, matrix_, OptionsPattern[]] := withExcludedFunctions[
+MatrixD[f_, matrix_, OptionsPattern[]] := WithExcludedFunctions[
 	Catch[
 		Block[
 			{
@@ -72,12 +74,11 @@ MatrixD /: D[Det[f_], MatrixD, NonConstants->{X_}] := Det[f] D[Tr[MatrixLog[f]],
 
 (* If inside of a Tr, then we can use simple derivatives of Matrix* functions. Otherwise fail *)
 MatrixD /: D[HoldPattern@MatrixFunction[f_, U_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
-	Replace[D[U, MatrixD, NonConstants->{X}], d:Except[0] -> d . MatrixFunction[simplifyPureFunction @ Derivative[1][f], U]],
+ 	Replace[D[U, MatrixD, NonConstants->{X}], d:Except[0] -> d . MatrixFunction[SimplifyPureFunction @ f', U]],
 
 	Message[MatrixD::unsup,MatrixFunction];
 	Throw[$Failed,"Unsupported"] 
-];
-simplifyPureFunction[Function[expr_]] := Function[Evaluate@Simplify[expr]]
+]
 
 MatrixD /: D[MatrixLog[f_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
 	Replace[D[f, MatrixD, NonConstants->{X}], d:Except[0] -> d . Inverse[f]],
@@ -187,26 +188,6 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 		}
 ]
 
-(* helper function that tempoararily excludes matrix functions from normal differentatiation rules *)
-SetAttributes[withExcludedFunctions, HoldFirst];
-withExcludedFunctions[body_, funs_] := Module[{old},
-	Internal`WithLocalSettings[
-		(* allow D to pass through matrix functions *)
-		old = "ExcludedFunctions" /.
-			("DifferentiationOptions"/. SystemOptions["DifferentiationOptions"]);
-		SetSystemOptions["DifferentiationOptions" -> "ExcludedFunctions"->
-			Union @ Join[
-				old,
-				funs
-			]
-		],
-
-		body,
-
-		SetSystemOptions["DifferentiationOptions"->"ExcludedFunctions"->old]
-	]
-]
-
 toAssumptions[f_, assum_] := assum && $Assumptions
 
 toAssumptions[f_, Automatic] := With[
@@ -257,7 +238,7 @@ TestMatrixD[a_, X_, OptionsPattern[]] := Module[{constants, constantRules},
 		Flatten[constants[[All,2]]]
 	];
 
-	withExcludedFunctions[
+	WithExcludedFunctions[
 		Column@{
 			D[a /. IJRules /. constants, {X /. constants}] /. constantRules,
 			Hold[Evaluate@MatrixD[a,X]] /. IJRules /. constants /. constantRules
