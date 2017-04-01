@@ -57,10 +57,10 @@ MatrixD /: D[Inverse[f_], MatrixD, NonConstants->{X_}] := -Inverse[f].D[f, Matri
  * MatrixFunction. Tr[MatrixExp[A. MatrixExp[X]] is not differentiable
  *)
 
-MatrixD /: D[Tr[f_], MatrixD, NonConstants->{X_}] := Block[
-	{trQ = MatchQ[f, _MatrixPower | _MatrixFunction | _MatrixLog | _MatrixExp]},
-
-	Tr[D[f, MatrixD, NonConstants->{X}]] /. Tr[0] -> 0
+MatrixD /: D[Tr[f_], MatrixD, NonConstants->{X_}] := With[{reduce = TrReduce[Tr[f]]},
+	Block[{trQ = True},
+		Tr[D[First @ reduce, MatrixD, NonConstants->{X}]] /. Tr[0] -> 0
+	]
 ]
 
 MatrixD /: D[Det[a_Dot], MatrixD, NonConstants->{X_}] /; $Invertible := Det[a] (D[Tr[MatrixLog[#]], MatrixD, NonConstants->{X}]& /@ Plus@@a)
@@ -79,6 +79,9 @@ MatrixD /: D[HoldPattern@MatrixFunction[f_, U_], MatrixD, NonConstants->{X_}] :=
 	Message[MatrixD::unsup,MatrixFunction];
 	Throw[$Failed,"Unsupported"] 
 ]
+
+MatrixD /: D[MatrixLog[f_Dot], MatrixD, NonConstants->{X_}] /; trQ && $Invertible := 
+	D[MatrixLog[#], MatrixD, NonConstants->{X}]& /@ Plus @@ f
 
 MatrixD /: D[MatrixLog[f_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
 	Replace[D[f, MatrixD, NonConstants->{X}], d:Except[0] -> d . Inverse[f]],
@@ -130,8 +133,9 @@ MatrixD /: D[MatrixPower[f_,n_], MatrixD, NonConstants-> {X_}] := Which[
  * D can be avoided, allowing the matrix version of D to operate when chaining. I need to be able to check
  * these intermediate derivatives for unsupported differentiation of scalar functions.*)
  
-MatrixD /: D[a_Dot|a_Times, MatrixD, NonConstants->{X_}] := 
+MatrixD /: D[a_Dot|a_Times, MatrixD, NonConstants->{X_}] := Block[{trQ=False},
 	Sum[MapAt[D[#, MatrixD, NonConstants->{X}]&, a, i], {i,Length[a]}]
+]
 
 MatrixD /: D[a_Plus, MatrixD, NonConstants->{X_}] :=
 	D[#, MatrixD, NonConstants->{X}]& /@ a
