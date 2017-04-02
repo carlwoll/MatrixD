@@ -6,6 +6,8 @@ WithExcludedFunctions::usage = "WithExcludedFunctions[expr, funs] prevents D fro
 SimplifyPureFunction::usage = "SimplifyPureFunction[Function[.]] applies Simplify to the pure function argument"
 TrReduce::usage = "TrReduce[Tr[expr]] expand sums and products by scalars, and converts the arguments of the resulting Tr objects to a single MatrixFunction if possible"
 ScalarQ::usage = "ScalarQ[expr] returns True if exp is not an Array object"
+FactorScalarList::usage = ""
+UsageBasedSymbols::usage = ""
 
 Begin["`Private`"] 
 
@@ -31,6 +33,10 @@ WithExcludedFunctions[body_, funs_] := Module[{old},
 
 SimplifyPureFunction[Function[expr_]] := Function[Evaluate@Simplify[expr, #>0]]
 SimplifyPureFunction[e_] := e
+
+FactorScalarList[a_Times] := With[{bool = ScalarQ /@ List @@ a},
+	{Pick[a, bool], Pick[a, bool, False]}
+]
 
 (* expand sums/products and eliminate Transpose at top level *)
 TrReduce[Tr[a_Transpose]] := TrReduce @ Tr[a]
@@ -116,6 +122,30 @@ ScalarQ[a_Plus] := AllTrue[a, ScalarQ]
 ScalarQ[a_Times] := AllTrue[a, ScalarQ]
 ScalarQ[a_Symbol] := TensorRank[a] === 0
 ScalarQ[a_] = True
+
+(* determine nature of symbols based on usage *)
+UsageBasedSymbols[f_] := Last@Reap[
+	Cases[f,
+		Verbatim[MatrixFunction][_, r_] | MatrixPower[r_, _] | (Inverse|MatrixExp|MatrixLog|Transpose|Tr|Det)[r_] :> iGet[r],
+		{0, Infinity}
+	],
+	_,
+	Rule[#1, DeleteDuplicates[#2]] &
+]
+
+iGet[s_Symbol] := Sow[s, "Matrices"]
+iGet[a_Plus] := iGet /@ a
+iGet[a_Dot] := iGet /@ a
+iGet[Inverse[a_]] := iGet[a]
+iGet[HoldPattern@MatrixFunction[_, a_]] := iGet[a]
+iGet[MatrixPower[a_, k_]] := {iGet[a], iScalar[k]}
+iGet[Transpose[a_]] := iGet[a]
+iGet[Tr[a_]] := iGet[a]
+iGet[Det[a_]] := iGet[a]
+
+iScalar[a_] := Sow[a, "Scalars"]
+
+
 
 End[] (* End Private Context *)
 

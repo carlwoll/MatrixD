@@ -12,6 +12,7 @@ MatrixD::unsup = "`1` is not supported outside of Tr";
 MatrixD::scalar = "Matrix derivative of a scalar function `1` encountered";
 
 Get["MatrixD`Utilities`"]
+Get["MatrixD`TestFunctions`"]
 
 Begin["`Private`"]
 
@@ -195,7 +196,7 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 toAssumptions[f_, assum_] := assum && $Assumptions
 
 toAssumptions[f_, Automatic] := With[
-	{symbols = getSymbols[f]},
+	{symbols = UsageBasedSymbols[f]},
 	{
 	m = Replace[
 		"Matrices" /. symbols,
@@ -208,56 +209,6 @@ toAssumptions[f_, Automatic] := With[
 	},
 	m && a && $Assumptions
 ]
-
-getSymbols[f_] := Last@Reap[
-	Cases[f,
-		(Alternatives@@$MatrixFunctions)[r_] :> iGet[r],
-		{0, Infinity}
-	],
-	_,
-	Rule[#1, DeleteDuplicates[#2]] &
-]
-
-iGet[s_Symbol] := Sow[s, "Matrices"]
-iGet[a_Plus] := iGet /@ a
-iGet[a_Dot] := iGet /@ a
-iGet[Inverse[a_]] := iGet[a]
-iGet[HoldPattern@MatrixFunction[_, a_]] := iGet[a]
-iGet[MatrixPower[a_, k_]] := {iGet[a], iScalar[k]}
-iGet[Transpose[a_]] := iGet[a]
-iGet[Tr[a_]] := iGet[a]
-iGet[Det[a_]] := iGet[a]
-
-iScalar[a_] := Sow[a, "Scalars"]
-
-Options[TestMatrixD] = {Constants -> Automatic};
-	
-TestMatrixD[a_, X_, OptionsPattern[]] := Module[{constants, constantRules},
-	constants = Replace[OptionValue[Constants],
-		Except[_List] :> "Matrices" /. getSymbols[a]
-	];
-	constants = # -> Array[Unique[], {2,2}]& /@ constants;
-
-	constantRules = MapThread[Rule, {#, RandomReal[1, Length[#]]}]&[
-		Flatten[constants[[All,2]]]
-	];
-
-	WithExcludedFunctions[
-		Column@{
-			D[a /. IJRules /. constants, {X /. constants}] /. constantRules,
-			Hold[Evaluate@MatrixD[a,X]] /. IJRules /. constants /. constantRules
-		},
-		$MatrixFunctions
-	] //ReleaseHold
-]
-
-IJRules = {
-	$IdentityMatrix -> IdentityMatrix[2],
-	$SingleEntryMatrix -> Transpose[
-		TensorProduct[IdentityMatrix[2], IdentityMatrix[2]],
-		{1, 3, 2, 4}
-	]
-};
 
 End[]
 
