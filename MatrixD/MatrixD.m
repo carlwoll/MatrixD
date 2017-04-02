@@ -2,14 +2,13 @@ BeginPackage["MatrixD`"]
 
 MatrixD::usage = "MatrixD[f, m] gives the matrix derivative of f with respect to the matrix m";
 MatrixReduce::usage = "MatrixReduce[expr] attempts to return a canonical form for the given symbolic matrix expression";
-TestMatrixD::usage = "TestMatrixD[f, m] evaluates f using both normal D[.., {matrix}] rules and MatrixD for random 2x2 versions of the matrix variables"
 
 $SingleEntryMatrix::usage = "$SingleEntryMatrix is the matrix derivative of X with respect to itself"
 $IdentityMatrix
 $MatrixDimension
 
 MatrixD::unsup = "`1` is not supported outside of Tr";
-MatrixD::scalar = "Matrix derivative of a scalar function `1` encountered";
+MatrixD::scalar = "Matrix derivative of scalar function `1` encountered";
 
 Get["MatrixD`Utilities`"]
 Get["MatrixD`TestFunctions`"]
