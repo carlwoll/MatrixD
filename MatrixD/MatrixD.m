@@ -15,8 +15,8 @@ Get["MatrixD`TestFunctions`"]
 
 Begin["`Private`"]
 
-$IdentityMatrix /: MakeBoxes[$IdentityMatrix, fmt_] := "\[DoubleStruckCapitalI]"
-$SingleEntryMatrix /: MakeBoxes[$SingleEntryMatrix, fmt_] := "\[DoubleStruckCapitalJ]"
+$IdentityMatrix /: MakeBoxes[$IdentityMatrix, fmt_] := InterpretationBox[StyleBox["\[DoubleStruckCapitalI]", Bold, Larger], $IdentityMatrix]
+$SingleEntryMatrix /: MakeBoxes[$SingleEntryMatrix, fmt_] := InterpretationBox[StyleBox["\[DoubleStruckCapitalJ]", Bold, Larger], $SingleEntryMatrix]
 $MatrixDimension = \[FormalD]
 
 $MatrixFunctions = {Tr, Transpose, Det, Inverse, MatrixPower, MatrixFunction, MatrixExp, MatrixLog}
@@ -27,7 +27,7 @@ MatrixD[f_, matrix_, OptionsPattern[]] := WithExcludedFunctions[
 	Catch[
 		Block[
 			{
-			$Assumptions = toAssumptions[f, OptionValue[Assumptions]],
+			$Assumptions = toAssumptions[f, Assumptions->OptionValue[Assumptions]],
 			$MatrixDimension = Replace[OptionValue["MatrixDimensions"], {{d_, d_} -> d, Except[_Integer] -> \[FormalD]}],
 			$Invertible = TrueQ@OptionValue["Invertible"]
 			},
@@ -44,7 +44,6 @@ MatrixD[f_, matrix_, OptionsPattern[]] := WithExcludedFunctions[
 ]
 
 MatrixD /: D[X_, MatrixD, NonConstants->{X_}] := $SingleEntryMatrix
-MatrixD /: D[Transpose[X_], MatrixD, NonConstants->{X_}] := Transpose[$SingleEntryMatrix]
 
 MatrixD /: D[Transpose[f_], MatrixD, NonConstants->{X_}] := Transpose[D[f, MatrixD, NonConstants->{X}]]
 MatrixD /: D[Inverse[f_], MatrixD, NonConstants->{X_}] := -Inverse[f].D[f, MatrixD, NonConstants->{X}].Inverse[f]
@@ -57,9 +56,12 @@ MatrixD /: D[Inverse[f_], MatrixD, NonConstants->{X_}] := -Inverse[f].D[f, Matri
  * MatrixFunction. Tr[MatrixExp[A. MatrixExp[X]] is not differentiable
  *)
 
-MatrixD /: D[Tr[f_], MatrixD, NonConstants->{X_}] := With[{reduce = TrReduce[Tr[f]]},
-	Block[{trQ = True},
-		Tr[D[First @ reduce, MatrixD, NonConstants->{X}]] /. Tr[0] -> 0
+MatrixD /: D[Tr[a_], MatrixD, NonConstants->{X_}] := With[{reduce = TrReduce[Tr[a]]},
+	Replace[reduce,
+		{
+		Tr[arg_] :> Block[{trQ=True}, Tr[D[arg, MatrixD, NonConstants->{X}]] /. Tr[0] -> 0],
+		arg_ :> D[arg, MatrixD, NonConstants->{X}]
+		}
 	]
 ]
 
@@ -74,7 +76,10 @@ MatrixD /: D[Det[f_], MatrixD, NonConstants->{X_}] := Det[f] D[Tr[MatrixLog[f]],
 
 (* If inside of a Tr, then we can use simple derivatives of Matrix* functions. Otherwise fail *)
 MatrixD /: D[HoldPattern@MatrixFunction[f_, U_], MatrixD, NonConstants->{X_}] := If[TrueQ@trQ,
- 	Replace[D[U, MatrixD, NonConstants->{X}], d:Except[0] -> d . MatrixFunction[SimplifyPureFunction @ f', U]],
+	Plus[
+	 	Replace[D[U, MatrixD, NonConstants->{X}], d:Except[0] -> d . SimplifyMatrixFunction[f', U]],
+	 	MixedFunction[D[f[#], MatrixD, NonConstants->{X}], U]
+	],
 
 	Message[MatrixD::unsup,MatrixFunction];
 	Throw[$Failed,"Unsupported"] 
@@ -107,6 +112,10 @@ MatrixD /: D[MatrixPower[f_,n_], MatrixD, NonConstants-> {X_}] := Which[
 
 	MatchQ[n,_Integer?Negative],
 	D[Dot @@ ConstantArray[Inverse[f], -n], MatrixD, NonConstants->{X}],
+
+	!TrueQ[Refine[Element[n, Integers]]],
+	Message[MatrixD::unsup, MatrixPower[f, n]];
+	Throw[$Failed, "Unsupported"],
 
 	TrueQ@Refine[n < 0],
 	-Sum[
@@ -152,7 +161,7 @@ MatrixD /: D[a_, MatrixD, NonConstants->{X_}] := Throw[
 Options[MatrixReduce] = {Assumptions:>Automatic, "Invertible"->True};
 
 MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
-	{Dot, Inverse, Tr, Transpose, $Assumptions=toAssumptions[f, OptionValue[Assumptions]]},
+	{Dot, Inverse, Tr, Transpose, $Assumptions=toAssumptions[f, Assumptions->OptionValue[Assumptions], Method->None]},
 
 	Unprotect[Dot, Inverse, Tr, Transpose];
 
@@ -164,7 +173,7 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 	(* support linearity so that Tr/Dot don't contain Plus/Times at top level *)	
 	Tr[a_Plus] := Distribute[Unevaluated[Tr[a]]];
 	Tr[Sum[a_, i__]] := Sum[Tr[a], i];
-	Tr[a_ b_] /; Refine[Element[a, Complexes]] := a Tr[b];
+	Tr[a_?ScalarQ b_] := a Tr[b];
 
 	Dot[a___, Sum[b_, i__], c___] := Sum[Dot[a,b,c], i];
 	a_Dot /; MemberQ[Unevaluated[a], _Plus] := Distribute[Unevaluated @ a];
@@ -175,8 +184,11 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 	Dot[___, 0, ___] = 0;
 
 	(* reduction of SingleEntryMatrix *)
-	Tr[Dot[a___, $SingleEntryMatrix, b___]] := Transpose @ Dot[b, a];
+	Tr[Dot[a___, $SingleEntryMatrix, b___]] := ExpandedTranspose @ Dot[b, a];
 	Tr[Dot[a___, Transpose[$SingleEntryMatrix], b___]] := Dot[b, a];
+
+	(* reduction of MatrixFunction with matrix dependent pure functions *)
+	Tr[MixedFunction[foo_, U_]] := distributeScalarList[foo, U];
 
 	f /. 
 		{
@@ -184,29 +196,54 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 		Verbatim[MatrixFunction][Log[#]& | Log, x_] :> MatrixLog[x],
 		Verbatim[MatrixFunction][Power[#, -1]&, x_] :> Inverse[x]
 		} //. 
-
-		h:(Dot|Transpose)->Composition[TensorReduce, TensorExpand, h] //.
+		{g_Function->g, h:(Dot|Transpose)->Composition[TensorReduce, TensorExpand, h]} //.
 		{
 			MatrixPower[x_,-1]->Inverse[x],
+			MatrixPower[x_, 1]->x,
 			(TensorTranspose|Transpose)[x_, {2,1}]->Transpose[x]
 		}
 ]
 
-toAssumptions[f_, assum_] := assum && $Assumptions
+(* collect on tensors instead *)
+distributeScalarList[e_, a_] := Module[{tensors},
+	tensors = DeleteDuplicates @ Flatten[
+		Replace[FactorTimesList[#],
+			{
+			{_, t_Times} :> List @@ t,
+			{_, t_} :> t
+			}
+		]& /@ Replace[Expand[e], {r_Plus :> List@@r, r_ :> {r}}]
+	];
+	Collect[
+		e,
+		tensors, 
+		Function[x, 
+			Replace[
+				FactorTimesList[x, "Predicate" -> Function[y, FreeQ[y, #]]],
+				{s_, t_} :> s MatrixFunction[t&, a]
+			]
+		]
+	]
+]
 
-toAssumptions[f_, Automatic] := With[
-	{symbols = UsageBasedSymbols[f]},
-	{
-	m = Replace[
-		"Matrices" /. symbols,
+Options[toAssumptions] = {Assumptions->True, Method->"Usage"}
+
+toAssumptions[f_, OptionsPattern[]] := If[OptionValue[Method] === "Usage",
+	With[
+		{symbols = UsageBasedSymbols[f]},
 		{
-		{x__} :> Element[Alternatives[x, $SingleEntryMatrix], Matrices[{$MatrixDimension, $MatrixDimension}]],
-		_ :> Element[$SingleEntryMatrix, Matrices[{$MatrixDimension, $MatrixDimension}]]
-		}
+		m = Replace[
+			"Matrices" /. symbols,
+			{
+			{x__} :> Element[Alternatives[x, $SingleEntryMatrix], Matrices[{$MatrixDimension, $MatrixDimension}]],
+			_ :> Element[$SingleEntryMatrix, Matrices[{$MatrixDimension, $MatrixDimension}]]
+			}
+		],
+		a = Replace["Scalars" /. symbols /. "Scalars" -> {}, x_ :> Element[Alternatives @@ Join[x, {_Det, _Tr}], Complexes]]
+		},
+		m && a && OptionValue[Assumptions] && $Assumptions
 	],
-	a = Replace["Scalars" /. symbols /. "Scalars" -> {}, x_ :> Element[Alternatives @@ Join[x, {_Det, _Tr}], Complexes]]
-	},
-	m && a && $Assumptions
+	OptionValue[Assumptions] && $Assumptions
 ]
 
 End[]

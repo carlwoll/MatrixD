@@ -4,10 +4,12 @@ BeginPackage["MatrixD`Utilities`", {"MatrixD`"}]
 
 WithExcludedFunctions::usage = "WithExcludedFunctions[expr, funs] prevents D from firing on funs"
 SimplifyPureFunction::usage = "SimplifyPureFunction[Function[.]] applies Simplify to the pure function argument"
+ExpandedTranspose::usage = "ExpandedTranspose[expr] transposes expr and expands out all Transpose objects"
 TrReduce::usage = "TrReduce[Tr[expr]] expand sums and products by scalars, and converts the arguments of the resulting Tr objects to a single MatrixFunction if possible"
 ScalarQ::usage = "ScalarQ[expr] returns True if exp is not an Array object"
-FactorScalarList::usage = ""
-UsageBasedSymbols::usage = ""
+FactorTimesList::usage = "FactorTimesList[Times[.]] produces a list of a product of scalars and nonscalars"
+UsageBasedSymbols::usage = "UsageBasedSymbols[expr] determines what kinds of tensors a symbol must be"
+SimplifyMatrixFunction::usage = "SimpifyMatrixFunction[func, arg] returns a simplified MatrixFunction[func, arg]"
 
 Begin["`Private`"] 
 
@@ -34,38 +36,54 @@ WithExcludedFunctions[body_, funs_] := Module[{old},
 SimplifyPureFunction[Function[expr_]] := Function[Evaluate@Simplify[expr, #>0]]
 SimplifyPureFunction[e_] := e
 
-FactorScalarList[a_Times] := With[{bool = ScalarQ /@ List @@ a},
+Options[FactorTimesList] = {"Predicate" -> ScalarQ}
+
+FactorTimesList[a_Times, OptionsPattern[]] := With[{bool = OptionValue["Predicate"] /@ List @@ a},
 	{Pick[a, bool], Pick[a, bool, False]}
 ]
+FactorTimesList[a_, OptionsPattern[]] := If[OptionValue["Predicate"][a], {a, 1}, {1, a}]
 
 (* expand sums/products and eliminate Transpose at top level *)
-TrReduce[Tr[a_Transpose]] := TrReduce @ Tr[a]
+TrReduce[Tr[Transpose[a_]]] := TrReduce @ Tr[a]
 TrReduce[Tr[a_Plus]] := TrReduce @* Tr /@ a
-TrReduce[Tr[a_Times]] := With[{bool = ScalarQ /@ List @@ a},
-	Pick[a, bool] Replace[Pick[a, bool, False],
-		{
-		1 -> Tr[$IdentityMatrix],
-		b_Times -> Tr[b],
-		b_ :> TrReduce[b]
-		}
-	]
+TrReduce[Tr[a_Times]] := Replace[
+	FactorTimesList[a, "Predicate"->ScalarQ],
+	{
+	{s_, 1} -> s Tr[$IdentityMatrix],
+	{s_, t_Times} -> s Tr[t],
+	{s_, t_} :> s TrReduce[Tr[t]]
+	}
 ]
 TrReduce[Tr[a_?ScalarQ]] := a Tr[$IdentityMatrix]
 TrReduce[Tr[a_Symbol]] := Tr[a]
 
 (* canonicalize matrix functions *)
-TrReduce[Tr[a:(_Inverse|_MatrixFunction|_MatrixLog|_MatrixExp|_MatrixPower)]] := Tr[fromMatrixFunction @ MFReduce[a]]
+TrReduce[Tr[a:(_Inverse|_MatrixFunction|_MatrixLog|_MatrixExp|_MatrixPower)]] := Replace[
+	fromMatrixFunction @ MFReduce[a],
+	{
+		t_Times :> TrReduce[Tr[t]],
+		t_ :> Tr[t]
+	}
+]
 
 (* main function *)
-TrReduce[Tr[a_Dot]] := Tr @ fromMatrixFunction @ MFJoin @ MFGrow @ MFAlign @ MFTranspose @ Map[MFReduce] @ a
+TrReduce[Tr[a_Dot]] := Replace[
+	fromMatrixFunction @ MFJoin @ MFGrow @ MFAlign @ MFTranspose @ Map[MFReduce] @ a,
+	{
+		t_Times :> TrReduce[Tr[t]],
+		t_ :> Tr[t]
+	}
+]
 
 (* MFTranpose expands out all Transpose objects *)
-MFTranspose[a_] := a /. Transpose -> expandTranspose
+MFTranspose[a_] := a /. Transpose -> ExpandedTranspose
 
-expandTranspose[a_Dot] := expandTranspose /@ Reverse @ a
-expandTranspose[Transpose[a_]] := a
-expandTranspose[Verbatim[MatrixFunction][f_, a_]] := MatrixFunction[f, expandTranspose[a]]
-expandTranspose[a_] := Transpose[a]
+ExpandedTranspose[a_Dot] := ExpandedTranspose /@ Reverse @ a
+ExpandedTranspose[Transpose[a_]] := a
+ExpandedTranspose[Verbatim[MatrixFunction][f_, a_]] := MatrixFunction[f, ExpandedTranspose[a]]
+ExpandedTranspose[(h:MatrixLog|MatrixExp|Inverse)[a_]] := h[ExpandedTranspose[a]]
+ExpandedTranspose[MatrixPower[a_, k_]] := MatrixPower[ExpandedTranspose[a], k]
+ExpandedTranspose[a_] := Transpose[a]
 
 (* MFAlign cycles the Dot product so that a MatrixFunction comes first (an allowed operation inside of Tr) *)
 MFAlign[a_Dot] := Replace[Position[a, _MatrixFunction, 1, 1],
@@ -97,18 +115,41 @@ toMF[MatrixPower[a_, k_]] := MatrixFunction[Power[#, k]&, a]
 contractMatrixFunction[a_] := a /. MatrixFunction -> contractMF
 
 contractMF[f_, Verbatim[MatrixFunction][g_, r_]] := MatrixFunction[SimplifyPureFunction[f[g[#]]&], r]
+contractMF[f_, a_Times] := Replace[FactorTimesList[a],
+	{s_, t_} :> Switch[t,
+		1, Message[MatrixFunction::matsq, s, 2]; Throw[$Failed, "Unsupported"], 
+		_Times, Message[MatrixFunction::ttimes, t]; Throw[$Failed, "Unsupported"],
+		_, contractMF[SimplifyPureFunction[f[s #]&], t]
+	]
+] 
 contractMF[a__] := MatrixFunction[a]
 
 (* convert from MatrixFunction *)
-fromMatrixFunction[a_] := a /. MatrixFunction -> fromMF
+fromMatrixFunction[a_] := a /. MatrixFunction -> SimplifyMatrixFunction
 
-fromMF[#&, a_] := a
-fromMF[Power[#, -1]&, a_] := Inverse[a]
-fromMF[Times[1, Power[#, -1]]&, a_] := Inverse[a]
-fromMF[Power[#, k_]&, a_] := MatrixPower[a, k]
-fromMF[Power[E, #]& | Exp, a_] := MatrixExp[a]
-fromMF[Log[#]& | Log, a_] := MatrixLog[a]
-fromMF[a__] := MatrixFunction[a]
+SimplifyMatrixFunction[#&, a_] := a
+SimplifyMatrixFunction[Power[#, -1]&, a_] := Inverse[a]
+SimplifyMatrixFunction[Times[1, Power[#, -1]]&, a_] := Inverse[a]
+SimplifyMatrixFunction[Power[#, k_]&, a_] := If[k===1, a, MatrixPower[a, k]]
+SimplifyMatrixFunction[Power[E, #]& | Exp, a_] := MatrixExp[a]
+SimplifyMatrixFunction[Log[#]& | Log, a_] := MatrixLog[a]
+SimplifyMatrixFunction[Function[z_], a_] := Which[
+	FreeQ[z, #], 
+	z
+	,
+	MatchQ[z, _Times],
+	Replace[
+		FactorTimesList[z, "Predicate" -> Function[y, FreeQ[y, #]]],
+		{
+		{1, h_} :> MatrixFunction[h&, a],
+		{s_, h_} :> s SimplifyMatrixFunction[h&, a]
+		}
+	]
+	,
+	True,
+	MatrixFunction[Function[z], a]
+]
+SimplifyMatrixFunction[a__] := MatrixFunction[a]
 
 (* ScalarQ *)
 ScalarQ[a_MatrixFunction] = False
