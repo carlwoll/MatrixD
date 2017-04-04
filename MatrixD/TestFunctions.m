@@ -3,6 +3,8 @@ BeginPackage["MatrixD`TestFunctions`", { "MatrixD`", "MatrixD`Utilities`"}]
 TestMatrixD::usage = "TestMatrixD[expr, X] evaluates the derivative using MatrixD and explicit random matrices"
 MatrixEquivalence::usage = "MatrixEquivalence[expr1, expr2] evaluates the matrix function expr1 and expr2 using explicit random matrices"
 
+General::nosym = "Unable to automatically determine matrix valued symbols from `1`"
+
 Begin["`Private`"] (* Begin Private Context *) 
 
 Options[TestMatrixD] = {Constants -> Automatic, "RandomSeed"->1};
@@ -35,21 +37,23 @@ IJRules = {
 	]
 };
 
-Options[MatrixEquivalence] = {Constants -> Automatic, "RandomSeed"->1};
+Options[MatrixEquivalence] = {Assumptions -> Automatic, "RandomSeed"->1};
 
-MatrixEquivalence[m1_, m2_, OptionsPattern[]] := Module[{constants, constantRules},
+MatrixEquivalence[m_List, OptionsPattern[]] := Module[{matrices, matrixRules},
 	SeedRandom[OptionValue["RandomSeed"]];
-	constants = Replace[OptionValue[Constants],
-		Except[_List] :> "Matrices" /. UsageBasedSymbols[{m1,m2}]
+	matrices = Replace[OptionValue[Assumptions],
+		Automatic :> ("Matrices" /. UsageBasedSymbols[m])
 	];
-	constants = # -> Array[Unique[], {2,2}]& /@ constants;
+	If[matrices === "Matrices", Message[MatrixEquivalence::nosym, m]; Return[$Failed]];
+	matrices = # -> Array[Unique[], {2,2}]& /@ matrices;
 
-	constantRules = MapThread[Rule, {#, RandomReal[1, Length[#]]}]&[
-		Flatten[constants[[All,2]]]
+	matrixRules = MapThread[Rule, {#, RandomReal[1, Length[#]]}]&[
+		Flatten[matrices[[All,2]]]
 	];
 
-	{m1, m2} /. constants /. constantRules
+	m /. matrices /. matrixRules
 ]
+
 
 End[] (* End Private Context *)
 
