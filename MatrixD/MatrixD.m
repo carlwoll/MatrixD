@@ -171,10 +171,12 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 		Inverse @ a_Dot := Inverse /@ Reverse[Dot[a]];
 	];
 
-	(* support linearity so that Tr/Dot don't contain Plus/Times at top level *)	
+	(* support linearity so that Tr/Dot don't contain Plus/Times at top level *)
 	Tr[a_Plus] := Distribute[Unevaluated[Tr[a]]];
 	Tr[Sum[a_, i__]] := Sum[Tr[a], i];
 	Tr[a_?ScalarQ b_] := a Tr[b];
+	Tr[0] = 0;
+
 	Transpose[a_?ScalarQ b_] := a ExpandedTranspose[b];
 
 	Dot[a___, Sum[b_, i__], c___] := Sum[Dot[a,b,c], i];
