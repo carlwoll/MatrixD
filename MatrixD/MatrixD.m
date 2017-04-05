@@ -21,7 +21,7 @@ $MatrixDimension = \[FormalD]
 
 $MatrixFunctions = {Tr, Transpose, Det, Inverse, MatrixPower, MatrixFunction, MatrixExp, MatrixLog}
 
-Options[MatrixD] = {Assumptions:>Automatic, "Invertible"->True, "MatrixDimensions"->{$MatrixDimension, $MatrixDimension}};
+Options[MatrixD] = {Assumptions->Automatic, "Invertible"->True, "MatrixDimensions"->{$MatrixDimension, $MatrixDimension}};
 
 MatrixD[f_, matrix_, OptionsPattern[]] := WithExcludedFunctions[
 	Catch[
@@ -35,7 +35,8 @@ MatrixD[f_, matrix_, OptionsPattern[]] := WithExcludedFunctions[
 			MatrixReduce[
 				D[f, MatrixD, NonConstants->{matrix}],
 				"Invertible"->OptionValue["Invertible"],
-				Assumptions->True
+				Assumptions->True,
+				Method->None
 			]
 		],
 		"Unsupported"
@@ -158,10 +159,10 @@ MatrixD /: D[a_, MatrixD, NonConstants->{X_}] := Throw[
 	"Unsupported"
 ] /; !FreeQ[a /. _Det|_Tr -> n, X]
 
-Options[MatrixReduce] = {Assumptions:>Automatic, "Invertible"->True};
+Options[MatrixReduce] = {Assumptions->Automatic, "Invertible"->True, Method->"Usage"};
 
 MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
-	{Dot, Inverse, Tr, Transpose, $Assumptions=toAssumptions[f, Assumptions->OptionValue[Assumptions], Method->None]},
+	{Dot, Inverse, Tr, Transpose, $Assumptions=toAssumptions[f, Assumptions->OptionValue[Assumptions], Method->OptionValue[Method]]},
 
 	Unprotect[Dot, Inverse, Tr, Transpose];
 
@@ -176,8 +177,18 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 	Tr[a_?ScalarQ b_] := a Tr[b];
 	Tr[0] = 0;
 
+	Transpose[a_?ScalarQ b_] := a ExpandedTranspose[b];
+
 	Dot[a___, Sum[b_, i__], c___] := Sum[Dot[a,b,c], i];
 	a_Dot /; MemberQ[Unevaluated[a], _Plus] := Distribute[Unevaluated @ a];
+	Dot[a___, b_Times, c___] := Replace[
+		FactorTimesList[b],
+		{
+		{s_, 1} :> Dot[a, c],
+		{s_, t_Times} :> (Message[Dot::ttimes, HoldForm[Dot[a, b, c]]]; Throw[$Failed, "Unsupported"]),
+		{s_, t_} :> s Dot[a, t, c] 
+		}
+	];
 
 	(* special cases *)	
 	Tr[$SingleEntryMatrix] := $IdentityMatrix;
@@ -221,7 +232,7 @@ distributeScalarList[e_, a_] := Module[{tensors},
 		Function[x, 
 			Replace[
 				FactorTimesList[x, "Predicate" -> Function[y, FreeQ[y, #]]],
-				{s_, t_} :> s Tr@MatrixFunction[t&, a]
+				{s_, t_} :> s Tr[MatrixFunction[t&, a]]
 			]
 		]
 	]
@@ -242,7 +253,7 @@ toAssumptions[f_, OptionsPattern[]] := If[OptionValue[Method] === "Usage",
 		],
 		a = Replace["Scalars" /. symbols /. "Scalars" -> {}, x_ :> Element[Alternatives @@ Join[x, {_Det, _Tr}], Complexes]]
 		},
-		m && a && OptionValue[Assumptions] && $Assumptions
+		m && a && Replace[OptionValue[Assumptions], Automatic->True] && $Assumptions
 	],
 	OptionValue[Assumptions] && $Assumptions
 ]
