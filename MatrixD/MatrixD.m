@@ -170,10 +170,11 @@ MatrixReduce[f_, OptionsPattern[]] := Internal`InheritedBlock[
 		Inverse @ a_Dot := Inverse /@ Reverse[Dot[a]];
 	];
 
-	(* support linearity so that Tr/Dot don't contain Plus/Times at top level *)	
+	(* support linearity so that Tr/Dot don't contain Plus/Times at top level *)
 	Tr[a_Plus] := Distribute[Unevaluated[Tr[a]]];
 	Tr[Sum[a_, i__]] := Sum[Tr[a], i];
 	Tr[a_?ScalarQ b_] := a Tr[b];
+	Tr[0] = 0;
 
 	Dot[a___, Sum[b_, i__], c___] := Sum[Dot[a,b,c], i];
 	a_Dot /; MemberQ[Unevaluated[a], _Plus] := Distribute[Unevaluated @ a];
@@ -220,7 +221,7 @@ distributeScalarList[e_, a_] := Module[{tensors},
 		Function[x, 
 			Replace[
 				FactorTimesList[x, "Predicate" -> Function[y, FreeQ[y, #]]],
-				{s_, t_} :> s MatrixFunction[t&, a]
+				{s_, t_} :> s Tr@MatrixFunction[t&, a]
 			]
 		]
 	]
