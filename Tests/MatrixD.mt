@@ -139,7 +139,7 @@ Test[
 ]
 
 Test[
-	MatrixD[MatrixPower[X, k], X]
+	MatrixD[MatrixPower[X, k], X, Assumptions->Element[k, Integers]]
 	,
 	Sum[MatrixPower[X, \[FormalK]] . $SingleEntryMatrix . MatrixPower[X, -1 - \[FormalK] + k], {\[FormalK], 0, -1 + k}]
 	,
@@ -315,7 +315,7 @@ Test[
 ]
 
 Test[
-	MatrixD[Tr[A.MatrixPower[X, k]], X]
+	MatrixD[Tr[A.MatrixPower[X, k]], X, Assumptions->Element[k, Integers]]
 	,
 	Sum[MatrixPower[Transpose[X], \[FormalK]] . Transpose[A] . MatrixPower[Transpose[X], -1 - \[FormalK] + k], {\[FormalK], 0, -1 + k}]
 	,
@@ -350,7 +350,7 @@ Test[
 Test[
 	MatrixD[Tr[MatrixFunction[Sin, X]], X]
 	,
-	Transpose[MatrixFunction[Cos[#1]&,X]]
+	MatrixFunction[Cos[#1]&, Transpose[X]]
 	,
 	TestID -> "MatrixCookbook-128"
 ]
@@ -387,9 +387,27 @@ Test[
 	TestID -> "Unsupported-3"
 ]
 
+(* new tests *)
+
+Test[
+	MatrixD[Tr[2 X.X], X]
+	,
+	4 Transpose[X]
+	,
+	TestID -> "New-1"
+]
+
+Test[
+	MatrixD[Tr[MatrixFunction[Sin[Det[X] #]&, A.X]], X]
+	,
+	Det[X] Transpose[A] . MatrixFunction[Cos[Det[X] #]&, Transpose[X].Transpose[A]] + Det[X] Inverse[Transpose[X]] Tr[MatrixFunction[Cos[Det[X] #] #&, A.X]]
+	,
+	TestID -> "New-2"
+]
+
 (* TensorReduce issues *)
 Test[
-	MatrixD[MatrixPower[Det[X] X, k], X]
+	MatrixD[MatrixPower[Det[X] X, k], X, Assumptions->Element[k, Integers]]
 	,
 	k Det[X]^k Inverse[Transpose[X]] MatrixPower[X, k] + 
 	Det[X]^k Sum[MatrixPower[X, \[FormalK]] . \[DoubleStruckCapitalJ] . MatrixPower[X, -1 - \[FormalK] + k], {\[FormalK], 0, -1 + k}]
